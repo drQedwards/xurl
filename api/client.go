@@ -1,23 +1,23 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"bufio"
 	"github.com/xdevplatform/xurl/auth"
 	"github.com/xdevplatform/xurl/config"
 	xurlErrors "github.com/xdevplatform/xurl/errors"
 	"github.com/xdevplatform/xurl/version"
-	"mime/multipart"
-	"os"
-	"path/filepath"
 )
 
 // RequestOptions contains common options for API requests

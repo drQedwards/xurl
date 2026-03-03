@@ -44,12 +44,12 @@ Import by module path in other Go projects:
 import "github.com/xdevplatform/xurl"
 ```
 
-If your consuming project uses a local replace for this repo and requires the short path, `import "xurl"` also works with:
+If your consuming project uses a local checkout of this repo, you can use a `replace` directive in your `go.mod` while still importing by the full module path:
 
 ```go
-require xurl v0.0.0
+require github.com/xdevplatform/xurl v0.0.0
 
-replace xurl => ../xurl
+replace github.com/xdevplatform/xurl => ../xurl
 ```
 
 
