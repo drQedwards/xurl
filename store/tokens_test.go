@@ -166,6 +166,21 @@ func TestMultiApp(t *testing.T) {
 		assert.Equal(t, []string{"bob"}, store.GetOAuth2UsernamesForApp("app2"))
 	})
 
+	t.Run("Per-app redirect uri is isolated", func(t *testing.T) {
+		err := store.SetAppRedirectURI("app1", "http://localhost:8080/callback")
+		require.NoError(t, err)
+		err = store.SetAppRedirectURI("app2", "http://localhost:9090/callback")
+		require.NoError(t, err)
+
+		redirectURI1, err := store.GetAppRedirectURI("app1")
+		require.NoError(t, err)
+		redirectURI2, err := store.GetAppRedirectURI("app2")
+		require.NoError(t, err)
+
+		assert.Equal(t, "http://localhost:8080/callback", redirectURI1)
+		assert.Equal(t, "http://localhost:9090/callback", redirectURI2)
+	})
+
 	t.Run("Remove app", func(t *testing.T) {
 		err := store.RemoveApp("app2")
 		require.NoError(t, err)
@@ -221,6 +236,17 @@ func TestMultiApp(t *testing.T) {
 		require.NotNil(t, tok)
 		assert.Equal(t, "z-tok", tok.OAuth2.AccessToken)
 	})
+
+	t.Run("Unnamed tokens are lower priority than named tokens", func(t *testing.T) {
+		store.SetDefaultApp("app1")
+		err := store.SaveOAuth2TokenForApp("app1", "", "fallback-tok", "fallback-ref", 444)
+		require.NoError(t, err)
+
+		username, tok := store.GetFirstOAuth2TokenRecordForApp("app1")
+		require.NotNil(t, tok)
+		assert.NotEmpty(t, username)
+		assert.NotEqual(t, "fallback-tok", tok.OAuth2.AccessToken)
+	})
 }
 
 func TestUpdateApp(t *testing.T) {
@@ -253,8 +279,21 @@ func TestUpdateApp(t *testing.T) {
 		assert.Equal(t, "newer-secret", app.ClientSecret)
 	})
 
+	t.Run("Set and get redirect URI", func(t *testing.T) {
+		err := store.SetAppRedirectURI("myapp", "http://localhost:8080/callback")
+		require.NoError(t, err)
+		redirectURI, err := store.GetAppRedirectURI("myapp")
+		require.NoError(t, err)
+		assert.Equal(t, "http://localhost:8080/callback", redirectURI)
+	})
+
 	t.Run("Update nonexistent app fails", func(t *testing.T) {
 		err := store.UpdateApp("nope", "x", "y")
+		assert.Error(t, err)
+	})
+
+	t.Run("Get redirect URI for nonexistent app fails", func(t *testing.T) {
+		_, err := store.GetAppRedirectURI("nope")
 		assert.Error(t, err)
 	})
 }
@@ -265,31 +304,17 @@ func TestCredentialBackfill(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	t.Setenv("HOME", tempDir)
-	xurlPath := filepath.Join(tempDir, ".xurl")
 
-	// Write a legacy JSON file (no credentials stored)
-	legacy := map[string]interface{}{
-		"oauth2_tokens": map[string]interface{}{
-			"user1": map[string]interface{}{
-				"type": "oauth2",
-				"oauth2": map[string]interface{}{
-					"access_token":    "at",
-					"refresh_token":   "rt",
-					"expiration_time": 9999,
-				},
-			},
-		},
-	}
-	data, _ := json.MarshalIndent(legacy, "", "  ")
-	os.WriteFile(xurlPath, data, 0600)
-
-	// First load without credentials — migration happens, no backfill
+	// An app with tokens but no stored client credentials (authenticated
+	// with CLIENT_ID/CLIENT_SECRET coming from env vars).
 	s1 := NewTokenStore()
+	require.NoError(t, s1.AddApp("default", "", ""))
+	require.NoError(t, s1.SaveOAuth2TokenForApp("default", "user1", "at", "rt", 9999))
 	app1 := s1.GetApp("default")
 	require.NotNil(t, app1)
 	assert.Empty(t, app1.ClientID, "Should have no client ID without backfill")
 
-	// Now load WITH credentials — should backfill the migrated app
+	// Loading WITH credentials should backfill the credential-less app.
 	s2 := NewTokenStoreWithCredentials("env-id", "env-secret")
 	app2 := s2.GetApp("default")
 	require.NotNil(t, app2)
@@ -436,7 +461,7 @@ func TestLegacyJSONMigration(t *testing.T) {
 
 	t.Setenv("HOME", tempDir)
 
-	// Write a legacy JSON .xurl file
+	// Write a pre-v1.0 legacy JSON .xurl file
 	legacy := map[string]interface{}{
 		"oauth2_tokens": map[string]interface{}{
 			"legacyuser": map[string]interface{}{
@@ -475,8 +500,10 @@ func TestLegacyJSONMigration(t *testing.T) {
 	require.NotNil(t, bearer)
 	assert.Equal(t, "leg-bearer", bearer.Bearer)
 
-	// File should now be YAML
-	raw, _ := os.ReadFile(xurlPath)
+	// File should now be YAML, living inside the ~/.xurl directory after
+	// the legacy-file migration.
+	assert.Equal(t, filepath.Join(xurlPath, "auth.yml"), store.FilePath)
+	raw, _ := os.ReadFile(store.FilePath)
 	assert.Contains(t, string(raw), "apps:")
 	assert.Contains(t, string(raw), "default_app:")
 }

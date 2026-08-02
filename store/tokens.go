@@ -52,6 +52,7 @@ type Token struct {
 type App struct {
 	ClientID     string           `yaml:"client_id"`
 	ClientSecret string           `yaml:"client_secret"`
+	RedirectURI  string           `yaml:"redirect_uri,omitempty"`
 	DefaultUser  string           `yaml:"default_user,omitempty"`
 	OAuth2Tokens map[string]Token `yaml:"oauth2_tokens,omitempty"`
 	OAuth1Token  *Token           `yaml:"oauth1_token,omitempty"`
@@ -68,6 +69,8 @@ type storeFile struct {
 
 // ─── Legacy JSON structure (for migration) ──────────────────────────
 
+// legacyStore is the pre-v1.0 single-app JSON layout of the token file;
+// loadFromData converts it to the YAML multi-app format on first load.
 type legacyStore struct {
 	OAuth2Tokens map[string]Token `json:"oauth2_tokens"`
 	OAuth1Token  *Token           `json:"oauth1_tokens,omitempty"`
@@ -83,22 +86,33 @@ type TokenStore struct {
 	FilePath   string          `yaml:"-"`
 }
 
-// Creates a new TokenStore, loading from ~/.xurl (auto-migrating legacy JSON).
+func resolveHomeDir() string {
+	if homeDir := os.Getenv("HOME"); homeDir != "" {
+		return homeDir
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Println("Error getting home directory:", err)
+		return "."
+	}
+
+	return homeDir
+}
+
+// Creates a new TokenStore, loading from ~/.xurl/auth.yml (migrating a
+// legacy single-file ~/.xurl on first use).
 func NewTokenStore() *TokenStore {
 	return NewTokenStoreWithCredentials("", "")
 }
 
 // NewTokenStoreWithCredentials creates a TokenStore and backfills the given
-// client credentials into any app that was migrated without them (i.e. legacy
-// JSON migration where CLIENT_ID / CLIENT_SECRET came from env vars).
+// client credentials into any app that has tokens but no stored client
+// ID/secret (e.g. apps authenticated with CLIENT_ID / CLIENT_SECRET coming
+// from env vars), so later refreshes work without the env vars present.
 func NewTokenStoreWithCredentials(clientID, clientSecret string) *TokenStore {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Println("Error getting home directory:", err)
-		homeDir = "."
-	}
-
-	filePath := filepath.Join(homeDir, ".xurl")
+	homeDir := resolveHomeDir()
+	filePath := AuthFilePath()
 
 	store := &TokenStore{
 		Apps:     make(map[string]*App),
@@ -210,6 +224,25 @@ func (s *TokenStore) UpdateApp(name, clientID, clientSecret string) error {
 		app.ClientSecret = clientSecret
 	}
 	return s.saveToFile()
+}
+
+// SetAppRedirectURI sets the redirect URI of an existing app.
+func (s *TokenStore) SetAppRedirectURI(name, redirectURI string) error {
+	app, exists := s.Apps[name]
+	if !exists {
+		return errors.NewTokenStoreError(fmt.Sprintf("app %q not found", name))
+	}
+	app.RedirectURI = redirectURI
+	return s.saveToFile()
+}
+
+// GetAppRedirectURI gets the stored redirect URI for an existing app.
+func (s *TokenStore) GetAppRedirectURI(name string) (string, error) {
+	app, exists := s.Apps[name]
+	if !exists {
+		return "", errors.NewTokenStoreError(fmt.Sprintf("app %q not found", name))
+	}
+	return app.RedirectURI, nil
 }
 
 // RemoveApp removes a registered application and its tokens.
@@ -453,19 +486,36 @@ func (s *TokenStore) GetFirstOAuth2Token() *Token {
 	return s.GetFirstOAuth2TokenForApp("")
 }
 
-// GetFirstOAuth2TokenForApp gets the default user's token, or the first OAuth2 token from the named app.
-func (s *TokenStore) GetFirstOAuth2TokenForApp(appName string) *Token {
+// GetFirstOAuth2TokenRecordForApp gets the preferred OAuth2 token key and token from the named app.
+func (s *TokenStore) GetFirstOAuth2TokenRecordForApp(appName string) (string, *Token) {
 	app := s.ResolveApp(appName)
-	// Prefer the default user if one is set and still has a token
 	if app.DefaultUser != "" {
 		if token, ok := app.OAuth2Tokens[app.DefaultUser]; ok {
-			return &token
+			return app.DefaultUser, &token
 		}
 	}
-	for _, token := range app.OAuth2Tokens {
-		return &token
+
+	usernames := s.GetOAuth2UsernamesForApp(appName)
+	for _, username := range usernames {
+		if username == "" {
+			continue
+		}
+		if token, ok := app.OAuth2Tokens[username]; ok {
+			return username, &token
+		}
 	}
-	return nil
+
+	if token, ok := app.OAuth2Tokens[""]; ok {
+		return "", &token
+	}
+
+	return "", nil
+}
+
+// GetFirstOAuth2TokenForApp gets the default user's token, or the first OAuth2 token from the named app.
+func (s *TokenStore) GetFirstOAuth2TokenForApp(appName string) *Token {
+	_, token := s.GetFirstOAuth2TokenRecordForApp(appName)
+	return token
 }
 
 // GetOAuth1Tokens gets OAuth1 tokens from the resolved app.
