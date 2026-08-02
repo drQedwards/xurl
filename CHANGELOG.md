@@ -2,6 +2,34 @@
 
 All user-visible bugs and enhancements should be recorded here.
 
+## Unreleased
+
+## v1.3.1 - 2026-07-21
+
+### Changed
+
+- Release binaries now include the full `xurl chat` XChat client on macOS (arm64/amd64) and Linux (amd64) — installing via Homebrew, npm, or a GitHub release tarball no longer prints the "not available in this build" stub on those platforms. The Linux amd64 binary is statically linked against musl, so it runs on both glibc and musl (e.g. Alpine) distros. Platforms without a chat-xdk library (Windows, Linux arm64/i386) still ship the graceful stub.
+
+## v1.3.0 - 2026-07-21
+
+### Added
+
+- `xurl chat` — an end-to-end encrypted XChat client. Commands: `keys status|restore|import`, `conversations`, `read`, `send`, `listen`, `download`, `rotate`, `add-members`, `mark-read`, and `typing`. Encryption, decryption, and signing happen locally via the chat-xdk library; the server only sees ciphertext. `send` supports encrypted attachments (`--file`) and threaded replies (`--reply-to`); reading and sending mark the conversation read automatically. xurl never generates or registers keys — an account must already have XChat keys from another client, brought to this machine via Juicebox PIN recovery or an exported key blob, and stored in `~/.xurl/keys.yml` (mode 600). Requires a cgo build on macOS (amd64/arm64) or Linux (amd64); prebuilt release binaries ship a stub explaining how to build with chat enabled.
+
+### Changed
+
+- `~/.xurl` is now a directory: tokens and app credentials live in `~/.xurl/auth.yml`, and XChat private keys live in `~/.xurl/keys.yml`. An existing single-file `~/.xurl` migrates automatically (rename-based and non-destructive) on first use, and the existing legacy migrations still apply on top of the new layout: pre-v1.0 JSON-format token files are converted to YAML, and `.twurlrc` import is unchanged. Older xurl binaries cannot read the new layout.
+
+## v1.2.3 - 2026-07-16
+
+### Added
+
+- [2026-07-15] **Cut Release** GitHub Actions workflow (`workflow_dispatch`) to promote `CHANGELOG.md`, commit + tag on `main`, and publish (GitHub release, Homebrew, npm) in one run.
+
+### Fixed
+
+- [2026-07-15] `xurl auth oauth2` no longer always warns that the "default" app has no client credentials when `--app` is omitted. The check used `GetApp("")` (empty-key map lookup, always nil) instead of the real default app, so it false-alarmed even when the active default (e.g. `app-2`) had credentials. The warning now resolves `default_app` and names that app correctly.
+
 ## v1.2.2 - 2026-06-29
 
 ### Fixed
